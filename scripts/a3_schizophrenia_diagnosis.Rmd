@@ -23,6 +23,12 @@ knit: (function(inputFile, encoding) {
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
+library(pacman)
+p_load(
+  tidyverse,
+  ggplot2,
+  dplyr
+)
 ```
 
 This assignment is based on the following paper:
@@ -31,7 +37,14 @@ This assignment is based on the following paper:
 
 Individuals with schizophrenia (SCZ) tend to present voice atypicalities. Their tone is described as "inappropriate" voice, sometimes monotone, sometimes croaky. This is important for two reasons. First, voice could constitute a direct window into cognitive, emotional, and social components of the disorder, thus providing a cheap and relatively non-invasive way to support the diagnostic and assessment process (via automated analyses). Secondly, voice atypicalities play an important role in the social impairment experienced by individuals with SCZ, and are thought to generate negative social judgments (of unengaged, slow, unpleasant interlocutors), which can cascade in more negative and less frequent social interactions.
 
-While several studies show significant differences in acoustic features by diagnosis, we want to know whether we can diagnose SCZ in participants only from knowing the features of their voice. To that end, the authors collected data from various relevant studies. The latter focused on analyzing voice recordings from people that just got a first diagnosis of schizophrenia, along with a 1:1 case-control sample of participants with matching gender, age, and education. Each participant watched several videos (here called trials) of triangles moving across the screen and had to describe them, so you have several recordings per person. Along with these files, pitch was recorded once every 10 milliseconds for each participant and various duration-related statistics were also collected (e.g. number of pauses). For the purpose of this assignment, studies conducted in languages other than Danish were filtered out.
+While several studies show significant differences in acoustic features by diagnosis, we want to know whether we can diagnose SCZ in participants only from knowing the features of their voice. 
+
+To that end, the authors collected data from various relevant studies. The latter focused on analyzing voice recordings from people that just got a first diagnosis of schizophrenia, along with a 1:1 case-control sample of participants with matching gender, age, and education. 
+
+Each participant watched several videos (here called trials) of triangles moving across the screen and had to describe them, so you have several recordings per person. 
+Along with these files, pitch was recorded once every 10 milliseconds for each participant and various duration-related statistics were also collected (e.g. number of pauses). 
+
+For the purpose of this assignment, studies conducted in languages other than Danish were filtered out.
 
 Your main task for this assignment will be to replicate this research project through the design, fit, and reporting of unsupervised learning methods. More precisely, this assignment will consist in:
 
@@ -57,10 +70,8 @@ There are two different data sets for this assignment:
   - *ASD (speakingtime/nsyll):* average syllable duration
 
 ```{r import_articulation_data}
-
-# Copy and paste this code chunk to add further code to this section
-# Remember to change the name of the chunk!
-
+art_data <- read.table("../data/articulation_data.txt", header = T, fill = T)
+p_data <- read.table("../data/pitch_data.txt", header = T, fill = T)
 ```
 
 
@@ -71,20 +82,73 @@ There are two different data sets for this assignment:
   - *coefvar:* Coefficient of variation
 
 
-```{r import_pitch_data}
+```{r cleaning_up_data_for_merge}
+#mutating diagnosis for myself
+p_data <- p_data %>%
+  mutate(Diagnosis = if_else(Diagnosis == "control", "CTRL", "SCZ" ))
 
-# Copy and paste this code chunk to add further code to this section
-# Remember to change the name of the chunk!
+#getting rid of useless columns
+art_data <- art_data %>%
+  select(-study, -phonationtime., -X.speakingtime.nsyll., -PauseDuration, -ID, -Study, -Trial, -Diagnosis, -ASD)
 
+#changing the column names to what they ought be for the merge
+art_data <- art_data %>%
+  #these are already present in the data but wrongly named
+  rename(Trial = X.nsyll)%>%
+  rename(ID = rate)%>%
+  rename(Diagnosis = articulation)%>%
+  rename(Study = X.nsyll.dur.) %>%
+  #adding the two new values that are missing but can be inferred from data?
+  mutate(articulationrate = (nsyll/phonationtime))%>%
+  #is this correct? *ASD (speakingtime/nsyll):* average syllable duration
+  #but there is no direct speakingtime unless that is speechrate?
+  mutate(ASD = (speechrate/nsyll)) %>%
+  #naming to match the naming convention
+  mutate(Diagnosis = if_else(Diagnosis == "control", "CTRL", "SCZ" ))
+
+#renaming more to make them pitch-distinct and more convenient for me
+p_data <- p_data %>%
+rename(p_mean = mean) %>%
+rename(p_sd = sd) %>%
+rename(p_min = min) %>%
+rename(p_max = max) %>%
+rename(p_median = median) %>%
+rename(p_iqr = iqr)%>%
+rename(p_mad = mad) %>%
+rename(p_coefvar = coefvar)
+
+#renaming more for my own convenience
+art_data <- art_data %>%
+rename(full_dur = dur)
+
+
+#should we choose only the relevant columns, are means, mins, maxes, etc. relevant if not listed??
+p_data <- p_data %>%
+  select(ID, Diagnosis, Study, Trial, p_iqr, p_mad, p_coefvar, p_mean, p_sd, p_min, p_max, p_median )
+art_data <- art_data %>%
+    select(ID, Diagnosis, Study, Trial, nsyll, npause, full_dur, phonationtime, speechrate, articulationrate, ASD)
+
+
+```
+
+```{r data_refactoring}
+#i assume these to be important as factor; can change it later
+p_data$Diagnosis <- as.factor(p_data$Diagnosis)
+p_data$Study <- as.factor(p_data$Study)
+p_data$Trial <- as.factor(p_data$Trial)
+p_data$ID <- as.factor(p_data$ID)
+
+art_data$Diagnosis <- as.factor(art_data$Diagnosis)
+art_data$Study <- as.factor(art_data$Study)
+art_data$Trial <- as.factor(art_data$Trial)
+art_data$ID <- as.factor(art_data$ID)
 ```
 
 After importing the data sets, make sure all common columns and values are named accordingly. Finally, merge the data sets on the appropriate columns, rename columns and values to your liking, and save the resulting data set using a file name and path of your own choosing.
 
 ```{r merge_and_save}
-
-# Copy and paste this code chunk to add further code to this section
-# Remember to change the name of the chunk!
-
+#hopefully correctly merged
+merged_data <- left_join(p_data, art_data, by = c("ID", "Study", "Trial", "Diagnosis"))
 ```
 
 # Understanding the sample using descriptive statistics
