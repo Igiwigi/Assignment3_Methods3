@@ -127,8 +127,6 @@ p_data <- p_data %>%
   select(ID, Diagnosis, Study, Trial, p_iqr, p_mad, p_coefvar, p_mean, p_sd, p_min, p_max, p_median )
 art_data <- art_data %>%
     select(ID, Diagnosis, Study, Trial, nsyll, npause, full_dur, phonationtime, speechrate, articulationrate, ASD)
-
-
 ```
 
 ```{r data_refactoring}
@@ -148,7 +146,8 @@ After importing the data sets, make sure all common columns and values are named
 
 ```{r merge_and_save}
 #hopefully correctly merged
-merged_data <- left_join(p_data, art_data, by = c("ID", "Study", "Trial", "Diagnosis"))
+df <- left_join(p_data, art_data, by = c("ID", "Study", "Trial", "Diagnosis"))
+write.csv(df, "../data/merged_data.csv", row.names = FALSE)
 ```
 
 # Understanding the sample using descriptive statistics
@@ -159,12 +158,65 @@ Here are some of the things you can do:
   - Describe the data set (number of studies, number of participants, age, gender, clinical and cognitive features of the two groups) and assess whether the groups (schizophrenia and controls) are balanced.
   - Describe the acoustic profile of a schizophrenic voice: which features are different? E.g. People with schizophrenia tend to have high-pitched voice. 
 
-```{r summarize_dataset}
+```{r summarize_dataset, warning = F, error= F}
+#exploring the dataset 
 
-# Copy and paste this code chunk to add further code to this section
-# Remember to change the name of the chunk!
+df %>%
+  group_by(Diagnosis) %>%
+  summarize(Count = n())
+#ratio between diagnoses seems balanced
+
+df %>%
+  group_by(Diagnosis)%>%
+  summarize(across(c(speechrate, phonationtime, articulationrate, ASD, npause, nsyll), mean))
+#SCZ speak less overall: 
+#less syllables per second = speechrate
+#less speech present in recording = phonationtime (seems significant at a glance!!)
+#slightly? less syllabes per second where speech is present = articulationrate
+#articulate syllables much slower = ASD (seems significant at a glance!!)
+#take slightly? more pauses
+#speak less syllables (seems significant at a glance!!)
+
+#doing a quick and dirty t-test to "confirm" the assumptions made at a glance
+df %>%
+  group_by(Diagnosis) %>%
+  summarise(across(where(is.numeric), ~ t.test(.x ~ as.factor(Diagnosis), data = df)$p.value))%>%
+  select_if(function(x) any(x < 0.05))
+
+#most columns are "statistically significant" as in, from different populations (this being a difference between the diagnoses)
+
+#namely, pitch interquartile range, pitch mean absolute deviation and pitch coefficient of variation, pitch max (do SCZ speak either high or low pitch?)
+#meaning that the pitch is significantly different between the diagnoses
+
+#number of syllables spoken overall, phonationtime (how much is spoken), the rate of speech and syllable articulation speed are also highly relevant
+
+#pause n and articulation rate were not significant in making the two groups different
+```
+
+```{r summarize_dataset_visually}
+ggplot(df, aes(x = Diagnosis, y = ASD, fill = Diagnosis)) +
+  geom_violin() +
+  labs(x = "Diagnosis", y = "Number of Syllables") +
+  ggtitle("Number of Syllables Spoken by Diagnosis") +
+      geom_text(data = means, aes(label = paste("mean:", round(ASD, 6))), vjust = -7, hjust = -0.1, size = 4) + 
+  theme_minimal()
+
+ggplot(df, aes(x = Diagnosis, y = nsyll, fill = Diagnosis)) +
+  geom_violin() +
+  labs(x = "Diagnosis", y = "Number of Syllables") +
+  ggtitle("Number of Syllables Spoken by Diagnosis") +
+      geom_text(data = means, aes(label = paste("mean:", round(nsyll, 6))), vjust = -7, hjust = -0.1, size = 4) + 
+  theme_minimal()
+
+ggplot(df, aes(x = Diagnosis, y = nsyll, fill = Diagnosis)) +
+  geom_violin() +
+  labs(x = "Diagnosis", y = "Number of Syllables") +
+  ggtitle("Number of Syllables Spoken by Diagnosis") +
+      geom_text(data = means, aes(label = paste("mean:", round(nsyll, 6))), vjust = -7, hjust = -0.1, size = 4) + 
+  theme_minimal()
 
 ```
+
 
 # Predicting diagnosis using supervised learning procedures
 
