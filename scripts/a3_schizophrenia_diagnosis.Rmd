@@ -27,7 +27,10 @@ library(pacman)
 p_load(
   tidyverse,
   ggplot2,
-  dplyr
+  dplyr,
+  caret,
+  randomForest,
+  pROC
 )
 ```
 
@@ -164,7 +167,17 @@ Here are some of the things you can do:
 df %>%
   group_by(Diagnosis) %>%
   summarize(Count = n())
-#ratio between diagnoses seems balanced
+#ratio between diagnoses seems balanced enough, though not perfectly 50/50
+
+df %>%
+  group_by(Diagnosis, Study) %>%
+  summarize(Count = n())
+#fairly balanced though for some reason big difference between Study 3 for SCZ and CTRL (151 vs 232)
+
+df %>%
+  group_by(Diagnosis, Trial) %>%
+  summarize(Count = n())
+#appears balanced enough
 
 df %>%
   group_by(Diagnosis)%>%
@@ -177,44 +190,93 @@ df %>%
 #take slightly? more pauses
 #speak less syllables (seems significant at a glance!!)
 
-#doing a quick and dirty t-test to "confirm" the assumptions made at a glance
+#doing a quick and dirty t-test to "confirm" the assumptions made at a glance (assuming non-normality so wilcox)
 df %>%
   group_by(Diagnosis) %>%
-  summarise(across(where(is.numeric), ~ t.test(.x ~ as.factor(Diagnosis), data = df)$p.value))%>%
+  summarise(across(where(is.numeric), ~ wilcox.test(.x ~ as.factor(Diagnosis), data = df)$p.value)) %>%
   select_if(function(x) any(x < 0.05))
 
-#most columns are "statistically significant" as in, from different populations (this being a difference between the diagnoses)
+#most columns are "statistically significant" as in, from different populations (this being a difference between the diagnoses) (not counting the means, which makes sense)
 
 #namely, pitch interquartile range, pitch mean absolute deviation and pitch coefficient of variation, pitch max (do SCZ speak either high or low pitch?)
 #meaning that the pitch is significantly different between the diagnoses
 
 #number of syllables spoken overall, phonationtime (how much is spoken), the rate of speech and syllable articulation speed are also highly relevant
 
-#pause n and articulation rate were not significant in making the two groups different
+#also variables related to pauses are significant
 ```
 
 ```{r summarize_dataset_visually}
+# geom_text(data = means, aes(label = paste("Mean:", round(mean_ASD, 2)), x = Diagnosis, y = mean_ASD), vjust = -1, hjust = 0.5, size = 4) + 
+  
+means <- df %>%
+  group_by(Diagnosis) %>%
+  summarize(mean_ASD = mean(ASD), mean_nsyll = mean(nsyll), mean_npause = mean(npause), mean_pitchmax = mean(p_max), mean_phonationtime = mean(phonationtime), mean_speechrate = mean(speechrate))
+
 ggplot(df, aes(x = Diagnosis, y = ASD, fill = Diagnosis)) +
+geom_violin() +
+labs(x = "Diagnosis", y = "AVG Syllable Duration") +
+ggtitle("Average Syllable Duration by Diagnosis") +
+theme_minimal() +
+stat_summary(fun.data=mean_sdl, geom="pointrange")+
+stat_summary(fun = "max", geom = "point", size = 3, position = position_dodge(width = 0.75), color = "red")+
+geom_text(data = means, aes(label = paste("Mean:", round(mean_ASD, 2)), x = Diagnosis, y = mean_ASD), vjust = -7, hjust = -0.1, size = 4)+
+  scale_fill_manual(values = c("SCZ" = "gray", "CTRL" = "white"))
+#maybe omit the most extreme of values? theres an extreme high average syllable duration, perhaps a different reason for it
+
+ggplot(df, aes(x = Diagnosis, y = p_max, fill = Diagnosis)) +
   geom_violin() +
-  labs(x = "Diagnosis", y = "Number of Syllables") +
-  ggtitle("Number of Syllables Spoken by Diagnosis") +
-      geom_text(data = means, aes(label = paste("mean:", round(ASD, 6))), vjust = -7, hjust = -0.1, size = 4) + 
-  theme_minimal()
+  labs(x = "Diagnosis", y = "Maximum pitch") +
+  ggtitle("Max Pitch by Diagnosis") +
+  theme_minimal() +
+stat_summary(fun.data="mean_sdl",geom="crossbar", width=0.02 )+
+  scale_fill_manual(values = c("SCZ" = "gray", "CTRL" = "white"))+
+  geom_text(data = means, aes(label = paste("Mean:", round(mean_pitchmax, 2)), x = Diagnosis, y = mean_pitchmax), vjust = -7, hjust = -0.1, size = 4)
+#pitch differs between groups apparently statistically significantly? CTRL individuals have higher pitch, but could also be related to gender, SCZ density plot has a fatter "bottom" visually
 
 ggplot(df, aes(x = Diagnosis, y = nsyll, fill = Diagnosis)) +
   geom_violin() +
   labs(x = "Diagnosis", y = "Number of Syllables") +
   ggtitle("Number of Syllables Spoken by Diagnosis") +
-      geom_text(data = means, aes(label = paste("mean:", round(nsyll, 6))), vjust = -7, hjust = -0.1, size = 4) + 
-  theme_minimal()
+  theme_minimal()+
+stat_summary(fun.data="mean_sdl",geom="crossbar", width=0.02 )+
+  scale_fill_manual(values = c("SCZ" = "gray", "CTRL" = "white"))+
+  geom_text(data = means, aes(label = paste("Mean:", round(mean_nsyll, 2)), x = Diagnosis, y = mean_nsyll), vjust = -7, hjust = -0.1, size = 4)
+#SCZ individuals speak less syllables, SCZ density plot has a fatter "bottom" visually
 
-ggplot(df, aes(x = Diagnosis, y = nsyll, fill = Diagnosis)) +
+ggplot(df, aes(x = Diagnosis, y = phonationtime, fill = Diagnosis)) +
   geom_violin() +
-  labs(x = "Diagnosis", y = "Number of Syllables") +
-  ggtitle("Number of Syllables Spoken by Diagnosis") +
-      geom_text(data = means, aes(label = paste("mean:", round(nsyll, 6))), vjust = -7, hjust = -0.1, size = 4) + 
-  theme_minimal()
+  labs(x = "Diagnosis", y = "Phonation time") +
+  ggtitle("Phonation Time by Diagnosis") +
+  theme_minimal()+
+stat_summary(fun.data="mean_sdl",geom="crossbar", width=0.02 )+
+  scale_fill_manual(values = c("SCZ" = "gray", "CTRL" = "white"))+
+  geom_text(data = means, aes(label = paste("Mean:", round(mean_phonationtime, 2)), x = Diagnosis, y = mean_phonationtime), vjust = -7, hjust = -0.3, size = 4)
+#overall, SCZ individuals speak less in the recording, density plot appears fairly similar, however
 
+ggplot(df, aes(x = Diagnosis, y = speechrate, fill = Diagnosis)) +
+  geom_violin() +
+  labs(x = "Diagnosis", y = "AVG of syllables spoken per second") +
+  ggtitle("AVG number of syllables per second by Diagnosis") +
+  theme_minimal()+
+stat_summary(fun.data="mean_sdl",geom="crossbar", width=0.02 )+
+  scale_fill_manual(values = c("SCZ" = "gray", "CTRL" = "white"))+
+  geom_text(data = means, aes(label = paste("Mean:", round(mean_speechrate, 2)), x = Diagnosis, y = mean_speechrate), vjust = -7, hjust = -0.3, size = 4)
+#an extreme value in SCZ
+
+ggplot(df, aes(x = Diagnosis, y = npause, fill = Diagnosis)) +
+  geom_violin() +
+  labs(x = "Diagnosis", y = "Pauses n") +
+  ggtitle("Number of pauses by Diagnosis") +
+  theme_minimal()+
+stat_summary(fun.data="mean_sdl",geom="crossbar", width=0.02 )+
+  scale_fill_manual(values = c("SCZ" = "gray", "CTRL" = "white"))+
+  geom_text(data = means, aes(label = paste("Mean:", round(mean_npause, 2)), x = Diagnosis, y = mean_npause), vjust = -7, hjust = -0.3, size = 4)
+#an extreme value in SCZ, fatter bottom on SCZ density plot
+
+
+#Visually it appears that the "shape" i.e. density of both SCZ and CTRL violin plots appears fairly similar, meaning that the potential difference with SCZ speech variables is more-so the range of values, not their distribution. That said, some of the SCZ plots had a fatter "bottom", meaning that more of the data points fall on the low side of things.
+#But visually *fairly* similar is not *the same*, might just convey that both categories are human-data (shared, overlapping distribution of being human or something along those lines)? but if enough data, wouldn't that approach normality?
 ```
 
 
@@ -253,17 +315,64 @@ In this phase, you will build a simple random forest model, by:
   - Compiling performance metrics of your own choosing.
   
 
-```{r simple_model}
+```{r simple_model-training_testing_set}
+set.seed(123)
 
-# Copy and paste this code chunk to add further code to this section
-# Remember to change the name of the chunk!
+train_indices <- createDataPartition(df$Diagnosis, p = 0.7, list = FALSE)
+training_set <- df[train_indices, -which(names(df) == "ID")]
+testing_set <- df[-train_indices, -which(names(df) == "ID")]
+#taking out ID from the test-training data as its too many factors for randomForest
 
+#however ID might be very important for seeing which person is which as each individual does multiple studies?
+#!!!
 ```
 
+
+```{r simple_model-checking_train-test_ratio}
+prop_train <- table(training_set$Diagnosis) / nrow(training_set)
+prop_test <- table(testing_set$Diagnosis) / nrow(testing_set)
+orig <- table(df$Diagnosis) / nrow(df)
+
+cat("Proportions in Training Set:\n", paste(names(prop_train), prop_train, sep = ": "), "\n\n")
+cat("Proportions in Testing Set:\n", paste(names(prop_test), prop_test, sep = ": "), "\n\n")
+cat("Proportions in OG set:\n", paste(names(orig), orig, sep = ": "), "\n\n")
+#close enough to the split of Diagnosis in the original set, appears validly split into test and training
+```
+
+
+```{r training_and_predicting_simple_model}
+rf_model <- randomForest(Diagnosis ~ ., data = training_set, ntree = 100)
+
+predictions <- predict(rf_model, newdata = testing_set)
+```
+```{r testing_simple_model_metrics}
+conf_matrix <- confusionMatrix(predictions, testing_set$Diagnosis)
+conf_matrix
+
+#a bunch of metrics from carot package
+accuracy <- conf_matrix$overall["Accuracy"]
+precision <- conf_matrix$byClass["Precision"]
+recall <- conf_matrix$byClass["Sensitivity"]
+f1_score <- (2 * precision * recall) / (precision + recall)
+specificity <- conf_matrix$byClass["Specificity"]
+roc_auc <- roc(testing_set$Diagnosis, as.numeric(predictions))$auc
+
+#metrics, dont understand all of them yet, i.e. Precision = True Positives/(true positives + false positives)
+print(paste("Accuracy:", round(accuracy * 100, 2), "%"))
+print(paste("Precision:", round(precision, 2)))
+print(paste("Recall:", round(recall, 2)))
+print(paste("F1 Score:", round(f1_score, 2)))
+print(paste("Specificity:", round(specificity, 2)))
+print(paste("AUC-ROC:", round(roc_auc, 2)))
+
+#seems higher than chance but not much better
+```
 
 ## Second phase: Forest Engineering
 
 In this section, you will try to optimize the performance of the model developed in the previous phase by adding a new random forest model, upgraded with feature engineering and parameter tuning procedures of your own choosing.
+#feature engineering!
+#parameter tuning procedures!
 
 ```{r optimize_model}
 
