@@ -25,7 +25,7 @@ knit: (function(inputFile, encoding) {
 knitr::opts_chunk$set(echo = TRUE)
 library(pacman)
 #install.packages(c("tidyverse", "ggplot2", "dplyr", "caret", "parsnip", "pROC", "ranger", "pacman"))
-pacman::p_load(tidyverse, ggplot2, dplyr, caret, parsnip, pROC, ranger)
+pacman::p_load(tidyverse, ggplot2, dplyr, caret, parsnip, pROC, ranger, workflows, vip, yardstick, mlbench, tidymodels, keras)
 ```
 
 This assignment is based on the following paper:
@@ -166,9 +166,6 @@ final_data$Study <- as.factor(final_data$Study)
 final_data$Trial <- as.factor(final_data$Trial)
 final_data$ID <- as.factor(final_data$ID)
 
-#why are there so many NA values in this dataframe but not the originals? 1900 obs. to 1761 obs.
-final_data <- na.omit(final_data)
-
 #as far as I know, we should have the pitch data, even without gender
 final_data <- left_join(final_data, p_data, by = c("ID", "Study", "Trial", "Diagnosis"))
 write.csv(final_data, "../data/merged_data_from_maxime.csv", row.names = FALSE)
@@ -177,6 +174,22 @@ write.csv(final_data, "../data/merged_data_from_maxime.csv", row.names = FALSE)
 df <- final_data
 ```
 
+```{r filtering_extreme_values_3SD}
+#there appear to be some extreme values
+df <- df %>% 
+  mutate(across(
+    where(is.numeric),
+    ~ ifelse(
+      abs(as.numeric(scale(.x))) > 3,
+      NA, 
+      .x
+    )
+  ))
+
+#why are there so many NA values in this dataframe but not the originals? 1900 obs. to 1562 obs. (though some were extreme values omitted)
+df <- na.omit(df)
+
+```
 
 # Understanding the sample using descriptive statistics
 
@@ -229,10 +242,11 @@ df %>%
 #namely what differs statistically is, the duration of the full recording (duration, why different recording times?), the duration of phonation within the recording (phonation_duration), the amount of syllables spoken (n_syllables), amount of pauses taken (n_pauses), average number of syllables per second (speech_rate), the avg duration of syllables spoken, the average number of syllables per second where speech is present (articulation_rate), duration it took to phonate syllables (syllables_phonation_duration) and average_pause_duration (self-explanatory)
 #values related to pitch were also significant, such as pitch min and max
 
-#total pause duration did not differ, neither did pitch mean nor median, signifying that, on average, both groups have the same median and mean values for pitch? and tend to take the same amount of pauses overall
+#pauses don't differ, making it seem as though this is not a marker for SCZ-style speech. Pitch mean and median are also not statistically significant, meaning that they are roughly the same for both SCZ and CTRL
 
 #this quick t-test would indicate that the speech variables would be able to distinguish one group from the other
 ```
+
 ```{r summarize_dataset_visually_setup}
 #this is very stupidly done here, couldve gotten the mean in the function just fine
 means <- df %>%
@@ -354,7 +368,8 @@ rf_model <- rand_forest(
   min_n = 5
 ) %>%
   set_engine("ranger") %>% 
-  fit(Diagnosis ~ ., data = training_set) #uses all as predictors?, is this a simple random forest model?
+  fit(Diagnosis ~ . , data = training_set)
+#default model for now
 ```
 
   - Testing the model's predictions on the testing set
@@ -386,7 +401,102 @@ print(paste("Recall:", round(recall, 2)))
 print(paste("F1 Score:", round(f1_score, 2)))
 print(paste("Specificity:", round(specificity, 2)))
 print(paste("AUC-ROC:", round(roc_auc, 2)))
-#70% seems ok for accuracy but could be better?
+#68.31% accuracy at default? with no feature engineering?
+```
+Now doing it like in the lectures
+```{r maxime-example}
+#doing this like in the lectures
+
+#setting a recipe
+this_recipe <-
+recipes::recipe(Diagnosis ~ ., data = training_set) %>%
+recipes::update_role(ID, new_role = 'ID')
+summary(this_recipe)
+#recipe set is generic
+
+#Setting Modelling Workflows with parsnip and workflows
+rf_model <-
+parsnip::rand_forest() %>%
+parsnip::set_mode("classification") %>%
+parsnip::set_engine("randomForest")
+rf_flow1 <-
+workflows::workflow() %>%
+workflows::add_model(rf_model) %>%
+workflows::add_recipe(this_recipe)
+rf_flow1
+
+#Fitting the Model with parsnip
+rf_fit1 <-
+rf_flow1 %>%
+parsnip::fit(data = training_set)
+rf_fit1
+
+#Plotting Variable Importance with vip
+vip_plot <-
+rf_fit1 %>%
+extract_fit_parsnip() %>%
+vip::vip()
+vip_plot
+
+#Predict Outcome Variable Values
+test_results <-
+testing_set %>%
+as_tibble() %>%
+mutate(
+predict(rf_fit1, new_data = testing_set),
+predict(rf_fit1, new_data = testing_set, type = "prob")
+)
+test_results[1:15, c('Diagnosis', '.pred_class', '.pred_SCZ', '.pred_CTRL')]
+
+#Building the Confusion Matrix with yardstick
+conf_mat <-
+yardstick::conf_mat(test_results,
+truth = Diagnosis,
+estimate = .pred_class)
+conf_plot <-
+autoplot(conf_mat, type = "heatmap") +
+scale_fill_gradient(low="#D6EAF8",
+high = "#2E86C1") +
+theme(
+axis.title = element_text(face = 'bold'),
+axis.text = element_text(face = 'bold')) +
+labs(x = 'TRUTH', y = 'PREDICTION')
+conf_plot
+
+#Evaluating Model Predictions with yardstick
+
+eval_metrics <- yardstick::metric_set(yardstick::mcc, yardstick::roc_auc, yardstick::accuracy, yardstick::sens, yardstick::spec, yardstick::f_meas)
+#hack-y but works
+
+test_metrics <-
+eval_metrics(test_results, Diagnosis,
+.pred_SCZ,
+estimate = .pred_class)
+
+metrics_plot <-
+test_metrics %>%
+as_tibble() %>%
+ggplot2::ggplot(
+aes(y = .metric,
+x= .estimate,
+label = round(.estimate, digits = 2))) +
+geom_segment(aes(x=0, xend=.estimate,
+y=.metric, yend=.metric)) +
+geom_point(size=5, color="red",
+fill=alpha("orange", 0.3),
+alpha=0.7, shape=21, stroke=2) +
+geom_text(aes(y = .metric,
+x = .estimate + .05)) +
+scale_y_discrete(lim = rev) +
+scale_x_continuous(lim = c(0,1),
+expand = c(0, 0)) +
+labs(x = 'ESTIMATE', y = 'METRIC') +
+theme(
+axis.title = element_text(face = 'bold'),
+axis.text = element_text(face = 'bold'),
+)
+metrics_plot
+#more or less the same accuracy obtained, 60ish
 ```
 
 ## Second phase: Forest Engineering
@@ -395,34 +505,82 @@ In this section, you will try to optimize the performance of the model developed
 #feature engineering!
 #parameter tuning procedures!
 
-```{r optimize_model}
-rf_model2 <- rand_forest(
-    mode = "classification"
-  )
+```{r feature_engineering_feature_removal_attempt}
+#new rf model to be upgraded with feature engineering; to be specific, feature removal
+#there is some repetition here since im trying to understand
+formula <- Diagnosis ~ speech_rate + average_syllable_duration + n_syllables + p_max + p_iqr + phonation_duration + average_pause_duration + articulation_rate + ID + Study + Trial +duration + total_pause_duration + n_pauses + syllable_duration + syllables_phonation_duration + p_mad + p_coefvar + p_mean + p_sd + p_min + p_median
+#i added all predictors, very poorly and stupidly since by hand (to test feature removal and vip)
+#also lazy since no random factors right now and no ties to earlier findings
 
-predictors <- c(
-  "speech_rate",
-  "average_syllable_duration",
-  "n_syllables",
-  "p_max",
-  "p_iqr"
+this_recipe <- recipes::recipe(
+  formula, 
+  data = training_set
 )
 
-rf_fit <- rf_model2 %>% fit_xy(
-  training_set[, predictors], 
-  training_set$Diagnosis
-)
+#Scaling numeric variables! might not be helpful for tree-based models? is this even remotely justified; should be done probably variable by variable?
+this_recipe <- 
+  this_recipe %>%
+  step_scale(all_numeric_predictors())
 
-predicted <- testing_set %>% 
-  mutate(
-    Predicted = predict(rf_fit, new_data = testing_set[, predictors])$.pred_class
-  )
+this_recipe <- this_recipe %>%
+  recipes::update_role(ID, new_role = 'ID')
+summary(this_recipe)
 
-conf_matrix <- confusionMatrix(data = factor(predicted$Predicted), reference = factor(testing_set$Diagnosis))
+rf_model2 <-
+parsnip::rand_forest() %>%
+parsnip::set_mode("classification") %>%
+parsnip::set_engine("randomForest")
+
+rf_flow <-
+workflows::workflow() %>%
+workflows::add_model(rf_model2) %>%
+workflows::add_recipe(this_recipe)
+rf_flow
+
+rf_fit <-
+rf_flow %>%
+parsnip::fit(data = training_set)
+rf_fit
+
+#Plotting Variable Importance with vip
+vip_plot <-
+rf_fit %>%
+extract_fit_parsnip() %>%
+vip::vip()
+vip_plot$data
+#does it automatically remove low features? does it automatically remove correlating features? since only a few are listed and theyre pretty high up there in terms of value
+
+unimportant_predictors <- vip_plot$data %>%
+  filter(Importance<= 30)
+ #attempting to remove the lowest ones for my own curiosity, though 30 is pretty good
+unimportant_predictors <- unimportant_predictors$Variable
+
+updated_recipe <- this_recipe %>%
+  step_rm(unimportant_predictors)
+
+#get the formula to update as well
+# formula <- update(formula, . ~ . -unimportant_predictors)
+# 
+# formula
+
+updated_recipe <- prep(updated_recipe, training_set)
+updated_recipe
+
+#hopefully this updates the goddamn recipe
+rf_flow <- rf_flow %>%
+  workflows::remove_recipe() %>%
+  workflows::add_recipe(updated_recipe)
+
+
+rf_fit_updated <- rf_flow %>%
+parsnip::fit(data = training_set)
+
+#testing whether anything has changed
+predictions2 <- predict(rf_fit_updated, new_data = testing_set)
+conf_matrix <- confusionMatrix(predictions2$.pred_class, testing_set$Diagnosis)
 conf_matrix
-#did the accuracy just get worse?
 
-#a bunch of metrics from carot package
+#also horribly inefficiently done
 accuracy <- conf_matrix$overall["Accuracy"]
 precision <- conf_matrix$byClass["Precision"]
 recall <- conf_matrix$byClass["Sensitivity"]
@@ -436,8 +594,38 @@ print(paste("Recall:", round(recall, 2)))
 print(paste("F1 Score:", round(f1_score, 2)))
 print(paste("Specificity:", round(specificity, 2)))
 print(paste("AUC-ROC:", round(roc_auc, 2)))
-#accuracy lower than original model, why?
+# accuracy is roughly the same; not changing
+# likely not really strongly affected by me omitting some values, especially since the vip_plot isnt showing drastically useless variables (i assume 30 is a pretty good estimate)
 
+#checking if the removal actually happened
+vip_plot <-
+rf_fit_updated %>%
+extract_fit_parsnip() %>%
+vip::vip()
+vip_plot$data
+```
+```{r feature_tuning_by_hand}
+#using my earlier visualizations etc. to hopefully pick the most important features by hand ""domain knowledge""
+```
+
+
+
+```{r hyperparameter tuning?}
+# hyperparameter grid for tuning
+model %>% compile(
+  loss = 'categorical_crossentropy',
+  optimizer = optimizer_rmsprop(),
+  metrics = c('accuracy')
+)
+
+```
+
+
+```{r optimize_model}
+model <- train(formula, data = training_set, method = "rf",
+               trControl = trainControl(method = "cv"),
+               tuneLength = 10)
+model
 ```
 
 ## Third phase: Another Algorithm
@@ -447,10 +635,8 @@ For this final part, add a supervised algorithm to the workflow set and compare 
 For a detailed list of the model types, engines, and arguments that can be used with the tidymodels framework, have a look here https://www.tidymodels.org/find/parsnip/#models
 
 
-```{r new_model}
+```{r another_algorithm}
 
-# Copy and paste this code chunk to add further code to this section
-# Remember to change the name of the chunk!
 
 ```
 
