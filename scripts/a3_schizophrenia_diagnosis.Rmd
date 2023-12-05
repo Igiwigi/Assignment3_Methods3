@@ -295,6 +295,7 @@ plotting_function(df, "Diagnosis", "average_pause_duration", "Diagnosis", means,
 
 plotting_function(df, "Diagnosis", "p_iqr", "Diagnosis", means, "mean_piqr", altstringy = "pitch interquartile range")
 ```
+
 Visually, it appears that the density plots for both conditions are fairly similar, with the main difference being that SCZ individuals are differently weighed, or are trending towards a direction; for example, they tend to have lower max pitch, higher syllable duration, speak less syllables and phonate (speak) less during the whole recording. 
 
 That said, whether this is distinctive enough to diagnose an individual is hard to say, since the vast majority of SCZ data points seem to overlap with the CTRL individuals in the density plots.
@@ -502,7 +503,7 @@ correlation_matrix <- cor(numeric_df)
 hc <- findCorrelation(correlation_matrix, cutoff=0.5) #setting the cut off fairly high
 not_cor_variables <- df[c(hc)]
 not_cor_variables <-  not_cor_variables[, c("ID", "Diagnosis", setdiff(names(not_cor_variables), c("ID", "Diagnosis")))] #reordering
-not_cor_variables
+
 #these could be good ones to keep? though i dont know fully if having correlated variables is bad? also doesnt the ML automatically figure this out, or?
 
 print(paste0(paste(names(df)[-hc], collapse = ", "), " - These should be omitted due to high correlation? Is this even remotely correct?"))
@@ -771,7 +772,6 @@ rf_fit <- final_wf %>% fit(training(split_df))
 
 max(model$results$ROC) 
 #names(getModelInfo())
-model$results
 
 predict <- predict(model, newdata = testing(split_df))
 conf_matrix <- confusionMatrix(data = predict, reference = testing(split_df)$Diagnosis, positive = "SCZ")
@@ -799,9 +799,11 @@ Afterwards, I messed about with various ML methods, such as tuning a tripartite 
 They gave mostly the same results of 60-65% accuracy and similar ROC.
 It's possible that I was doing them incorrectly, or that one of my pre-processing steps, such as the recipe I chose, may have lessened the data/training quality.
 
+
   - Based on the performance evaluation of your models, do you think the second and third phase of the third section were worth the extra effort? Was any model successful in diagnosing schizophrenia from voice?
 
 It appears that I am not yet capable of actually creating or tuning a model to be better than the default; i.e. I was stuck at around 64% throughout my attempts, which was not better than what I had in the 2nd part. I assume there's something I'm still missing or that the act of tuning and training a model takes extensive trial and error alongside statistical knowledge--that is, choices that are justified with more than idle curiosity and have some sort of knowledge of the data distribution or statistical methods behind them (the latter two I am still lacking in). That said, it could be not worth the effort for this task--I'm not sure.
+
 
   - How do the predictive models you built relate to the descriptive analysis conducted in the second section?
 
@@ -809,7 +811,9 @@ I struggled with tying the predictive models to the descriptive analysis, but I 
 
 It does appear that I may have been correct about the SCZ and CTRL speech and pitch parameters overlapping too much on the density plot for it to be a slam dunk classification task.
 
+
   - What is the explanatory scope of the analyses and procedures you conducted here, if any?
+  
 From the visual analyses alone, it is rather apparent that schizophrenic and non-schizophrenic individuals have more or less the same "distribution" of vocal characteristics outside of schizophrenics "trending towards the bottom" on variables such as pitch and number of syllables spoken. It is very likely that, as a result, it is rather difficult to distinguish one from the other unless you happen to have a schizophrenic with a very "stereotypically extreme" distribution of pitch and speech characteristics. As such, I'm not sure whether speech characteristics are enough alone for the sake of distinguishing the two from each other (reliably anyway).
 
 While it's possible my models were all just poorly optimized and handled, it seems to me that a percentage of much over 70% would be overfitting on the training data/data available to the study. I suppose it could still be used as one of many markers of schizophrenia though, just not as a standalone one.
