@@ -22,10 +22,11 @@ knit: (function(inputFile, encoding) {
 
 
 ```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE)
+rand_seed <- set.seed(123)
+knitr::opts_chunk$set(echo = TRUE, cache.extra = rand_seed) ##how do this??
 library(pacman)
-#install.packages(c("tidyverse", "ggplot2", "dplyr", "caret", "parsnip", "pROC", "ranger", "pacman"))
-pacman::p_load(tidyverse, ggplot2, dplyr, caret, parsnip, pROC, ranger, workflows, vip, yardstick, mlbench, tidymodels, keras)
+pacman::p_load(plyr, tidyverse, ggplot2, dplyr, caret, parsnip, pROC, ranger, workflows, vip, yardstick, tidymodels, finetune, rsample, discrim, klaR, kernlab)
+#mlbench, kernlab, discrim,klaR)
 ```
 
 This assignment is based on the following paper:
@@ -89,7 +90,7 @@ p_data <- p_data %>%
 
 # #getting rid of useless columns
 art_data <- art_data %>%
-  select(-study, -phonationtime., -X.speakingtime.nsyll., -PauseDuration, -ID, -Study, -Trial, -Diagnosis, -ASD)
+  dplyr::select(-study, -phonationtime., -X.speakingtime.nsyll., -PauseDuration, -ID, -Study, -Trial, -Diagnosis, -ASD)
 
 #changing the column names to what they ought be for the merge
 art_data <- art_data %>%
@@ -124,9 +125,9 @@ rename(full_dur = dur)
 
 #should we choose only the relevant columns, are means, mins, maxes, etc. relevant if not listed??
 p_data <- p_data %>%
-  select(ID, Diagnosis, Study, Trial, p_iqr, p_mad, p_coefvar, p_mean, p_sd, p_min, p_max, p_median )
+  dplyr::select(ID, Diagnosis, Study, Trial, p_iqr, p_mad, p_coefvar, p_mean, p_sd, p_min, p_max, p_median )
 art_data <- art_data %>%
-    select(ID, Diagnosis, Study, Trial, nsyll, npause, full_dur, phonationtime, speechrate, articulationrate, ASD)
+    dplyr::select(ID, Diagnosis, Study, Trial, nsyll, npause, full_dur, phonationtime, speechrate, articulationrate, ASD)
 ```
 
 ```{r data_refactoring}
@@ -150,7 +151,7 @@ df <- left_join(p_data, art_data, by = c("ID", "Study", "Trial", "Diagnosis"))
 write.csv(df, "../data/merged_data.csv", row.names = FALSE)
 ```
 
-Fixing the dataframe given by Maxime later on (I hope I'm doing it correctly; I am very confused)
+Fixing the latest dataframe given by Maxime later on:
 ```{r fix_new_df}
 final_data <- final_data %>%
   mutate(diagnosis = if_else(diagnosis == "control", "CTRL", "SCZ" )) %>%
@@ -175,7 +176,7 @@ df <- final_data
 ```
 
 ```{r filtering_extreme_values_3SD}
-#there appear to be some extreme values
+#there appear to be some extreme values, though I assume they are permitted, hence 3SD as an arbitrary range
 df <- df %>% 
   mutate(across(
     where(is.numeric),
@@ -187,6 +188,7 @@ df <- df %>%
   ))
 
 #why are there so many NA values in this dataframe but not the originals? 1900 obs. to 1562 obs. (though some were extreme values omitted)
+#could be fixed with ML?
 df <- na.omit(df)
 
 ```
@@ -200,12 +202,9 @@ Here are some of the things you can do:
   - Describe the acoustic profile of a schizophrenic voice: which features are different? E.g. People with schizophrenia tend to have high-pitched voice. 
 
 ```{r summarize_dataset, warning = F, error= F}
-#exploring the dataset 
-
 df %>%
   group_by(Diagnosis) %>%
   summarize(Count = n())
-#ratio between diagnoses seems balanced enough, though not perfectly 50/50
 
 df %>%
   group_by(Diagnosis, Study) %>%
@@ -219,15 +218,12 @@ df %>%
 
 df %>%
   group_by(Diagnosis)%>%
-  summarize(across(c(speech_rate, phonation_duration, articulation_rate, average_syllable_duration, n_pauses, n_syllables), mean))
-#SCZ speak less overall: 
-#less syllables per second = speechrate
-#less speech present in recording = phonationtime (seems significant at a glance!!)
-#slightly? less syllabes per second where speech is present = articulationrate
-#articulate syllables much slower = ASD (seems significant at a glance!!)
-#take slightly? more pauses, though appears fairly similar
-#speak less syllables (seems significant at a glance!!)
+  summarize(across(c(speech_rate, phonation_duration, articulation_rate, average_syllable_duration, n_pauses, n_syllables, p_max), mean))
+```
+ratio between diagnoses, studies and trials seems balanced enough, though not perfectly 50/50 (for some reason big difference between Study 3 for SCZ and CTRL (151 vs 232)
 
+looking at mean values, the speech markers do seem to differ between SCZ and CTRL
+```{r dirty_t-test_dataset, warning = F, error= F}
 #doing a quick and dirty t-test to "confirm" the assumptions made at a glance (assuming non-normality so wilcox)
 df %>%
   summarise(across(where(is.numeric), ~ wilcox.test(.x ~ as.factor(Diagnosis), data = df)$p.value)) %>%
@@ -236,22 +232,22 @@ df %>%
 df %>%
   summarise(across(where(is.numeric), ~ wilcox.test(.x ~ as.factor(Diagnosis), data = df)$p.value)) %>%
   select_if(function(x) any(x > 0.05))
-
-#most columns (outside of pause_duration) are "statistically significant" as in, from different populations (this being a difference between the diagnoses)
-
-#namely what differs statistically is, the duration of the full recording (duration, why different recording times?), the duration of phonation within the recording (phonation_duration), the amount of syllables spoken (n_syllables), amount of pauses taken (n_pauses), average number of syllables per second (speech_rate), the avg duration of syllables spoken, the average number of syllables per second where speech is present (articulation_rate), duration it took to phonate syllables (syllables_phonation_duration) and average_pause_duration (self-explanatory)
-#values related to pitch were also significant, such as pitch min and max
-
-#pauses don't differ, making it seem as though this is not a marker for SCZ-style speech. Pitch mean and median are also not statistically significant, meaning that they are roughly the same for both SCZ and CTRL
-
-#this quick t-test would indicate that the speech variables would be able to distinguish one group from the other
 ```
+Most columns (outside of pause_duration) are ""statistically significant"" as in, likely to be from 2 different populations (this being a difference between the diagnoses)
 
+Namely what "differs statistically" is, the duration of the full recording (duration, why different recording times?), the duration of phonation within the recording (phonation_duration), the amount of syllables spoken (n_syllables), amount of pauses taken (n_pauses), average number of syllables per second (speech_rate), the avg duration of syllables spoken, the average number of syllables per second where speech is present (articulation_rate), duration it took to phonate syllables (syllables_phonation_duration) and average_pause_duration (self-explanatory)
+values related to pitch were also significant, such as pitch min and max
+
+Pauses don't appear to differ so much, making it seem as though this is not a marker for SCZ-style speech. Pitch mean and median are also not statistically significant, meaning that they are roughly the same for both SCZ and CTRL.
+
+This quick t-test would indicate that the speech variables and pitch do differ for the two groups.
+
+That said, I don't know whether I am justified in doing a quick t-test just to see whether the variables are likely to "distinguish" the two groups from each other. Also, not like I checked the assumptions.
 ```{r summarize_dataset_visually_setup}
 #this is very stupidly done here, couldve gotten the mean in the function just fine
 means <- df %>%
   group_by(Diagnosis) %>%
-  summarize(mean_ASD = mean(average_syllable_duration), mean_nsyll = mean(n_syllables), mean_npause = mean(n_pauses), mean_pitchmax = mean(p_max), mean_phonationtime = mean(phonation_duration), mean_speechrate = mean(speech_rate), mean_a_pausedur = mean(average_pause_duration), mean_piqr = mean(p_iqr))
+  summarize(mean_ASD = mean(average_syllable_duration), mean_nsyll = mean(n_syllables), mean_npause = mean(n_pauses), mean_pitchmax = mean(p_max), mean_phonationtime = mean(phonation_duration), mean_speechrate = mean(speech_rate), mean_a_pausedur = mean(average_pause_duration), mean_piqr = mean(p_iqr), mean_pitchmin = mean(p_min))
 
 plotting_function <- function(df, x, y, fill, means_df, mean_y, altstringx = NULL, altstringy = NULL) {
   title_x <- ifelse(!is.null(altstringx), altstringx, gsub("_", " ", x))
@@ -284,29 +280,24 @@ plotting_function <- function(df, x, y, fill, means_df, mean_y, altstringx = NUL
 
 ```{r summarize_dataset_visually}
 plotting_function(df, "Diagnosis", "average_syllable_duration", "Diagnosis", means, "mean_ASD")
-#some extreme values in scz, meaning some individual is very slow to speak syllables, overall CTRL appears to have a fat distribution on the bottom of "fast speakers" while this is not the case for SCZ
 
 plotting_function(df, "Diagnosis", "p_max", "Diagnosis", means, "mean_pitchmax", altstringy = "Max pitch")
-#pitch appears lower overall on SCZ individuals, with them having a "fatter bottom" i.e. more low pitch speakers. Gender is not taken into account
+
+plotting_function(df, "Diagnosis", "p_min", "Diagnosis", means, "mean_pitchmin", altstringy = "Min pitch")
 
 plotting_function(df, "Diagnosis", "n_syllables", "Diagnosis", means, "mean_nsyll", altstringy = "Number of syllables")
-#SCZ has more individuals who spoke less syllables and a lower mean, though there is an extremely high value
 
 plotting_function(df, "Diagnosis", "phonation_duration", "Diagnosis", means, "mean_phonationtime")
-#SCZ has a fatter bottom, i.e. more individuals phonating (talking) less throughout the whole recording. There is an extreme value, however
 
 plotting_function(df, "Diagnosis", "speech_rate", "Diagnosis", means, "mean_speechrate")
-#SCZ has an overall lower speech rate compared to CTRL
 
 plotting_function(df, "Diagnosis", "average_pause_duration", "Diagnosis", means, "mean_a_pausedur")
-#one extreme pause taker in SCZ, higher pause duration overall for SCZ
 
 plotting_function(df, "Diagnosis", "p_iqr", "Diagnosis", means, "mean_piqr", altstringy = "pitch interquartile range")
-#much lower pitch for SCZ in terms of Interquartile range
-
-#in other words, the shape of the density plots appears mostly similar between conditions, the SCZ individuals are just differently weighed--such as having a lower max pitch or speech rate
 ```
+Visually, it appears that the density plots for both conditions are fairly similar, with the main difference being that SCZ individuals are differently weighed, or are trending towards a direction; for example, they tend to have lower max pitch, higher syllable duration, speak less syllables and phonate (speak) less during the whole recording. 
 
+That said, whether this is distinctive enough to diagnose an individual is hard to say, since the vast majority of SCZ data points seem to overlap with the CTRL individuals in the density plots.
 
 # Predicting diagnosis using supervised learning procedures
 
@@ -338,19 +329,21 @@ In this phase, you will build a simple random forest model, by:
 
   - Splitting the data in training and testing sets
 ```{r simple_model-training_testing_set}
-set.seed(123)
+#omitting Study and Trial since they're not linguistic markers
+df <- df %>%
+  dplyr::select(-Study, -Trial)
 
-train_indices <- createDataPartition(df$Diagnosis, p = 0.7, list = FALSE)
-training_set <- as.data.frame(df[train_indices, ])
-testing_set <- as.data.frame(df[-train_indices, ])
+split_df <- initial_split(df, prop = 0.7,strata = Diagnosis)
+#this method splits the df into training & testing sets
 ```
 
 
 ```{r simple_model-checking_train-test_ratio}
 #just curious
-prop_train <- table(training_set$Diagnosis) / nrow(training_set)
-prop_test <- table(testing_set$Diagnosis) / nrow(testing_set)
+prop_train <- table(training(split_df)$Diagnosis) / length(training(split_df)$Diagnosis)
+prop_test <- table(testing(split_df)$Diagnosis) / length(testing(split_df)$Diagnosis)
 orig <- table(df$Diagnosis) / nrow(df)
+
 
 cat("Proportions in Training Set:\n", paste(names(prop_train), prop_train, sep = ": "), "\n\n")
 cat("Proportions in Testing Set:\n", paste(names(prop_test), prop_test, sep = ": "), "\n\n")
@@ -368,30 +361,29 @@ rf_model <- rand_forest(
   min_n = 5
 ) %>%
   set_engine("ranger") %>% 
-  fit(Diagnosis ~ . , data = training_set)
-#default model for now
+  fit(Diagnosis ~ . , data = training(split_df))
 ```
 
   - Testing the model's predictions on the testing set
 ```{r testing_simple_model}
-predictions <- predict(rf_model, new_data = testing_set)
+predictions <- predict(rf_model, new_data = testing(split_df))
 ```
 
   - Building the confusion matrix
 ```{r confusion_matrix_simple_model}
-conf_matrix <- confusionMatrix(predictions$.pred_class, testing_set$Diagnosis)
+conf_matrix <- confusionMatrix(predictions$.pred_class, testing(split_df)$Diagnosis)
 conf_matrix
 ```
 
   - Compiling performance metrics of your own choosing.
 ```{r testing_simple_model_metrics}
-#a bunch of metrics from carot package
+#a bunch of metrics from carot package, probably can be done in a more concise way
 accuracy <- conf_matrix$overall["Accuracy"]
 precision <- conf_matrix$byClass["Precision"]
 recall <- conf_matrix$byClass["Sensitivity"]
 f1_score <- (2 * precision * recall) / (precision + recall)
 specificity <- conf_matrix$byClass["Specificity"]
-roc_auc <- roc(testing_set$Diagnosis, as.numeric(predictions$.pred_class))$auc
+roc_auc <- roc(testing(split_df)$Diagnosis, as.numeric(predictions$.pred_class))$auc
 #fix this error
 
 #metrics, dont understand all of them yet, i.e. Precision = True Positives/(true positives + false positives)
@@ -401,15 +393,15 @@ print(paste("Recall:", round(recall, 2)))
 print(paste("F1 Score:", round(f1_score, 2)))
 print(paste("Specificity:", round(specificity, 2)))
 print(paste("AUC-ROC:", round(roc_auc, 2)))
-#68.31% accuracy at default? with no feature engineering?
+#67.74 % accuracy at default? with no feature engineering?
+#AUC-ROC 0.67
 ```
-Now doing it like in the lectures
 ```{r maxime-example}
 #doing this like in the lectures
 
 #setting a recipe
 this_recipe <-
-recipes::recipe(Diagnosis ~ ., data = training_set) %>%
+recipes::recipe(Diagnosis ~ ., data = training(split_df)) %>%
 recipes::update_role(ID, new_role = 'ID')
 summary(this_recipe)
 #recipe set is generic
@@ -419,6 +411,7 @@ rf_model <-
 parsnip::rand_forest() %>%
 parsnip::set_mode("classification") %>%
 parsnip::set_engine("randomForest")
+
 rf_flow1 <-
 workflows::workflow() %>%
 workflows::add_model(rf_model) %>%
@@ -428,7 +421,7 @@ rf_flow1
 #Fitting the Model with parsnip
 rf_fit1 <-
 rf_flow1 %>%
-parsnip::fit(data = training_set)
+parsnip::fit(data = training(split_df))
 rf_fit1
 
 #Plotting Variable Importance with vip
@@ -440,11 +433,11 @@ vip_plot
 
 #Predict Outcome Variable Values
 test_results <-
-testing_set %>%
+testing(split_df) %>%
 as_tibble() %>%
 mutate(
-predict(rf_fit1, new_data = testing_set),
-predict(rf_fit1, new_data = testing_set, type = "prob")
+predict(rf_fit1, new_data =testing(split_df)),
+predict(rf_fit1, new_data = testing(split_df), type = "prob")
 )
 test_results[1:15, c('Diagnosis', '.pred_class', '.pred_SCZ', '.pred_CTRL')]
 
@@ -483,7 +476,6 @@ label = round(.estimate, digits = 2))) +
 geom_segment(aes(x=0, xend=.estimate,
 y=.metric, yend=.metric)) +
 geom_point(size=5, color="red",
-fill=alpha("orange", 0.3),
 alpha=0.7, shape=21, stroke=2) +
 geom_text(aes(y = .metric,
 x = .estimate + .05)) +
@@ -496,137 +488,122 @@ axis.title = element_text(face = 'bold'),
 axis.text = element_text(face = 'bold'),
 )
 metrics_plot
-#more or less the same accuracy obtained, 60ish
+#different scores than before even though global set seed?
 ```
 
 ## Second phase: Forest Engineering
 
 In this section, you will try to optimize the performance of the model developed in the previous phase by adding a new random forest model, upgraded with feature engineering and parameter tuning procedures of your own choosing.
-#feature engineering!
-#parameter tuning procedures!
+```{r curious_about_correlations}
+#curious about the correlation of the numeric variables; many are derived from the same thing, so might be bad to have? though could also help the algorithm; helpful redundancy?
+numeric_df <- df[sapply(df, is.numeric) & !sapply(df, is.factor)]
+correlation_matrix <- cor(numeric_df)
 
-```{r feature_engineering_feature_removal_attempt}
-#new rf model to be upgraded with feature engineering; to be specific, feature removal
-#there is some repetition here since im trying to understand
-formula <- Diagnosis ~ speech_rate + average_syllable_duration + n_syllables + p_max + p_iqr + phonation_duration + average_pause_duration + articulation_rate + ID + Study + Trial +duration + total_pause_duration + n_pauses + syllable_duration + syllables_phonation_duration + p_mad + p_coefvar + p_mean + p_sd + p_min + p_median
-#i added all predictors, very poorly and stupidly since by hand (to test feature removal and vip)
-#also lazy since no random factors right now and no ties to earlier findings
+hc <- findCorrelation(correlation_matrix, cutoff=0.5) #setting the cut off fairly high
+not_cor_variables <- df[c(hc)]
+not_cor_variables <-  not_cor_variables[, c("ID", "Diagnosis", setdiff(names(not_cor_variables), c("ID", "Diagnosis")))] #reordering
+not_cor_variables
+#these could be good ones to keep? though i dont know fully if having correlated variables is bad? also doesnt the ML automatically figure this out, or?
 
-this_recipe <- recipes::recipe(
-  formula, 
-  data = training_set
+print(paste0(paste(names(df)[-hc], collapse = ", "), " - These should be omitted due to high correlation? Is this even remotely correct?"))
+
+#formula <- Diagnosis ~ ID + phonation_duration + p_sd + p_min + p_mad + articulation_rate + p_coefvar + n_syllables + duration + average_pause_duration + p_iqr + speech_rate + syllables_phonation_duration?
+#would it even make a difference? have I done this correctly?
+
+to_remove <- names(df[-hc])
+```
+
+```{r removing_corr_from_recipe}
+#trying to omit the correlated predictors from earlier, wound up creating a new recipe since step_rm was finnicky
+predictors <- this_recipe$var_info$variable
+new_predictors <- setdiff(predictors, c(to_remove, "Diagnosis"))
+
+
+cor_removed_recipe <-
+  recipe(
+    Diagnosis ~ ID + duration + phonation_duration + n_syllables + speech_rate + articulation_rate + syllables_phonation_duration + average_pause_duration + p_iqr + p_mad + p_coefvar + p_sd + p_min,
+    data = training(split_df)
+  ) %>% #had to do by hand unfortunately, couldnt figure it out otherwise
+  step_normalize(all_numeric_predictors(),-all_outcomes()) %>%
+  step_YeoJohnson(all_numeric_predictors(),-all_outcomes()) %>%
+  update_role(ID, new_role = "ID")
+
+summary(cor_removed_recipe)
+#this seems to make no difference, really
+```
+
+```{r feature_engineering-1}
+#new rf model to be upgraded with feature engineering, tripartite best
+#also normalization
+
+valid_split <- initial_validation_split(
+   df, 
+  prop = c(0.7, 0.15),
+  strata = Diagnosis
 )
+#splits into test, training AND validation
 
-#Scaling numeric variables! might not be helpful for tree-based models? is this even remotely justified; should be done probably variable by variable?
-this_recipe <- 
-  this_recipe %>%
-  step_scale(all_numeric_predictors())
+cor_removed_recipe <-
+  recipe(
+    Diagnosis ~ ID + duration + phonation_duration + n_syllables + speech_rate + articulation_rate + syllables_phonation_duration + average_pause_duration + p_iqr + p_mad + p_coefvar + p_sd + p_min,
+    data = training(valid_split) #using validation here
+  ) %>% 
+  step_normalize(all_numeric_predictors(),-all_outcomes()) %>%
+  update_role(ID, new_role = "ID")
+#normalizing the variables, center and scale them, since good for unsupervised learning? but might need to be better justified
+#In general you should be careful about using -all_outcomes() if a ⁠*_predictors()⁠ selector would do what you want.
 
-this_recipe <- this_recipe %>%
-  recipes::update_role(ID, new_role = 'ID')
-summary(this_recipe)
 
-rf_model2 <-
-parsnip::rand_forest() %>%
-parsnip::set_mode("classification") %>%
-parsnip::set_engine("randomForest")
+rf_flow <- workflow() %>% 
+  add_model(rand_forest(
+    mode = "classification", 
+    engine = "randomForest",
+    trees = tune(), #tune these
+    min_n = tune()
+  )) %>% 
+  add_recipe(cor_removed_recipe)
 
-rf_flow <-
-workflows::workflow() %>%
-workflows::add_model(rf_model2) %>%
-workflows::add_recipe(this_recipe)
-rf_flow
+tripartite <- tune_grid(
+  rf_flow, 
+  vfold_cv(validation(valid_split)), 
+  grid = grid_max_entropy(extract_parameter_set_dials(rf_flow), size = 10)
+)
+tripartite %>% collect_metrics()
+#doing tripartite now
+```
 
-rf_fit <-
-rf_flow %>%
-parsnip::fit(data = training_set)
-rf_fit
+
+```{r feature_engineering-2}
+final_fit <- last_fit(
+  finalize_workflow(rf_flow, select_best(tripartite, "roc_auc")), 
+  valid_split, 
+  add_validation_set = TRUE
+)
+#using the best tripartite and finalizing workplace, using validation set
 
 #Plotting Variable Importance with vip
 vip_plot <-
-rf_fit %>%
+final_fit %>%
 extract_fit_parsnip() %>%
 vip::vip()
-vip_plot$data
-#does it automatically remove low features? does it automatically remove correlating features? since only a few are listed and theyre pretty high up there in terms of value
+vip_plot
 
-unimportant_predictors <- vip_plot$data %>%
-  filter(Importance<= 30)
- #attempting to remove the lowest ones for my own curiosity, though 30 is pretty good
-unimportant_predictors <- unimportant_predictors$Variable
+predicted <- final_fit %>%
+  pull(.predictions) %>%
+  bind_cols() %>%
+  mutate(
+    Predicted = .pred_class,
+    Prob_SCZ = .pred_SCZ,
+    type = "prob"
+  )
 
-updated_recipe <- this_recipe %>%
-  step_rm(unimportant_predictors)
-
-#get the formula to update as well
-# formula <- update(formula, . ~ . -unimportant_predictors)
-# 
-# formula
-
-updated_recipe <- prep(updated_recipe, training_set)
-updated_recipe
-
-#hopefully this updates the goddamn recipe
-rf_flow <- rf_flow %>%
-  workflows::remove_recipe() %>%
-  workflows::add_recipe(updated_recipe)
-
-
-rf_fit_updated <- rf_flow %>%
-parsnip::fit(data = training_set)
-
-#testing whether anything has changed
-predictions2 <- predict(rf_fit_updated, new_data = testing_set)
-conf_matrix <- confusionMatrix(predictions2$.pred_class, testing_set$Diagnosis)
+conf_matrix <- confusionMatrix(predicted$Predicted, testing(valid_split)$Diagnosis)
 conf_matrix
 
-#also horribly inefficiently done
-accuracy <- conf_matrix$overall["Accuracy"]
-precision <- conf_matrix$byClass["Precision"]
-recall <- conf_matrix$byClass["Sensitivity"]
-f1_score <- (2 * precision * recall) / (precision + recall)
-specificity <- conf_matrix$byClass["Specificity"]
-roc_auc <- roc(testing_set$Diagnosis, as.numeric(predictions$.pred_class))$auc
-
-print(paste("Accuracy:", round(accuracy * 100, 2), "%"))
-print(paste("Precision:", round(precision, 2)))
-print(paste("Recall:", round(recall, 2)))
-print(paste("F1 Score:", round(f1_score, 2)))
-print(paste("Specificity:", round(specificity, 2)))
-print(paste("AUC-ROC:", round(roc_auc, 2)))
-# accuracy is roughly the same; not changing
-# likely not really strongly affected by me omitting some values, especially since the vip_plot isnt showing drastically useless variables (i assume 30 is a pretty good estimate)
-
-#checking if the removal actually happened
-vip_plot <-
-rf_fit_updated %>%
-extract_fit_parsnip() %>%
-vip::vip()
-vip_plot$data
-```
-```{r feature_tuning_by_hand}
-#using my earlier visualizations etc. to hopefully pick the most important features by hand ""domain knowledge""
+predicted
+#accuracy not much better?
 ```
 
-
-
-```{r hyperparameter tuning?}
-# hyperparameter grid for tuning
-model %>% compile(
-  loss = 'categorical_crossentropy',
-  optimizer = optimizer_rmsprop(),
-  metrics = c('accuracy')
-)
-
-```
-
-
-```{r optimize_model}
-model <- train(formula, data = training_set, method = "rf",
-               trControl = trainControl(method = "cv"),
-               tuneLength = 10)
-model
-```
 
 ## Third phase: Another Algorithm
 
@@ -635,9 +612,174 @@ For this final part, add a supervised algorithm to the workflow set and compare 
 For a detailed list of the model types, engines, and arguments that can be used with the tidymodels framework, have a look here https://www.tidymodels.org/find/parsnip/#models
 
 
-```{r another_algorithm}
+```{r anova_racing_kernlab}
+#racing method with anova, not tuning the recipe though?
+
+training_folds <- vfold_cv(df, v = 10) #splitting into folds for training
+
+m1 <-
+  svm_rbf(cost = tune(), rbf_sigma = tune()) %>%
+  set_engine("kernlab") %>%
+  set_mode("classification")
+
+m1_grid <-
+  m1 %>%
+  hardhat::extract_parameter_set_dials() %>% 
+  grid_latin_hypercube(size = 25)
+
+wflow <-
+  workflow() %>%
+  add_model(m1) %>%
+  add_recipe(cor_removed_recipe)
+
+anova_race <- wflow %>% tune_race_anova(resamples = training_folds, grid = m1_grid)
+```
 
 
+```{r anova_racing_kernlab_2}
+show_best(anova_race, metric = "roc_auc", n = 2)
+plot_race(anova_race)
+
+best_model <- select_best(anova_race, metric = "roc_auc")
+
+final_rf <- finalize_model(
+  m1,
+  best_model
+) #am i using this bit correctly?
+
+final_res <- cor_removed_recipe %>%
+  workflow() %>%
+  add_model(final_rf)
+
+final_fit  <- final_res %>%
+last_fit(split_df)
+
+final_metrics <- final_fit %>%
+  collect_metrics()
+
+final_metrics
+#better performance than the later model? or more or less the same?
+
+predicted <- data.frame(final_fit$.predictions)
+
+conf_matrix <-
+  confusionMatrix(
+    data = predicted$.pred_class,  # Accessing the predictions column
+    reference = predicted$Diagnosis,
+    positive = "SCZ"
+  )
+print(conf_matrix)
+```
+
+```{r anova_racing_klaR_preprocessing}
+rda_spec <- discrim_regularized(frac_common_cov = tune(), frac_identity = tune()) %>%
+    set_engine("klaR")%>%
+  set_mode("classification")
+
+ctrl <- control_race(verbose_elim = TRUE)
+
+grid_anova <- rda_spec %>%
+    tune_race_anova(cor_removed_recipe, resamples = training_folds, grid = 10, control = ctrl)
+
+show_best(grid_anova, metric = "roc_auc", n = 2)
+plot_race(grid_anova)
+
+best_model <- select_best(grid_anova, metric = "roc_auc")
+
+final_model <- finalize_model(
+  rda_spec,
+  best_model
+) #is this a correct way to finalize?
+
+final_res <- cor_removed_recipe %>%
+  workflow() %>%
+  add_model(final_model)
+
+final_fit  <- final_res %>%
+last_fit(split_df)
+
+predicted <- data.frame(final_fit$.predictions)
+
+conf_matrix <-
+  confusionMatrix(
+    data = predicted$.pred_class,  # Accessing the predictions column
+    reference = predicted$Diagnosis,
+    positive = "SCZ"
+  )
+print(conf_matrix)
+```
+
+```{r optimize_model_gbm_failure?}
+pacman::p_load("gbm") #trying out gbm
+
+ctrl <- trainControl(method = "cv", 
+                     summaryFunction = twoClassSummary,
+                     classProbs = TRUE,
+                     savePredictions = TRUE)
+
+
+model <- train(
+  cor_removed_recipe, 
+  data = training(split_df), 
+  method = "gbm",
+  trControl = ctrl,
+  tuneLength = 5,
+  metric = "ROC",
+  verbose = FALSE
+)
+
+predictions <- predict(model, newdata = testing(split_df))
+
+predicted_labels <- factor(predictions, levels = c("SCZ", "CTRL"))
+actual_labels <- factor(testing(split_df)$Diagnosis, levels = c("SCZ", "CTRL"))
+
+conf_matrix <- confusionMatrix(data = predicted_labels, reference = actual_labels)
+conf_matrix
+```
+
+
+```{r optimize_model_svmPoly}
+svmPoly_model <- train(
+  cor_removed_recipe, #normalization; is that a smart choice? was removing correlates ok? did it make a difference
+  data = training(split_df),
+  method = "svmPoly",
+  trControl = trainControl(method = "cv"), #since cv, couldnt i use the whole data?
+  tuneLength = 3, #lowered it
+  verbose = F
+)
+plot(svmPoly_model)
+max(svmPoly_model$results$Accuracy)
+
+svmPoly_predict <- predict(svmPoly_model, newdata = testing(split_df))
+conf_matrix <- confusionMatrix(data = svmPoly_predict, reference = testing(split_df)$Diagnosis, positive = "SCZ")
+print(conf_matrix)
+```
+
+
+
+```{r svmPoly_as_a_workflow}
+final_model_svm <- 
+  svm_rbf() %>% #using svm
+  set_engine("kernlab") %>%
+parsnip::set_mode("classification")
+
+final_wf <- workflow() %>%
+  add_model(final_model_svm)%>%
+  add_recipe(cor_removed_recipe)
+
+rf_fit <- final_wf %>% fit(training(split_df))
+
+max(model$results$ROC) 
+#names(getModelInfo())
+model$results
+
+predict <- predict(model, newdata = testing(split_df))
+conf_matrix <- confusionMatrix(data = predict, reference = testing(split_df)$Diagnosis, positive = "SCZ")
+print(conf_matrix)
+
+predict <- predict(rf_fit, new_data = testing(split_df))
+conf_matrix <- confusionMatrix(data = predict$.pred_class, reference = testing(split_df)$Diagnosis, positive = "SCZ")
+print(conf_matrix)
 ```
 
 
@@ -645,8 +787,29 @@ For a detailed list of the model types, engines, and arguments that can be used 
 
 Finally, briefly summarize and discuss the methodological choices you've made throughout as well as the results obtained at the different modeling stages. In particular, I would like to get your input as regards to the following questions:
 
-  - Based on the performance evaluation of your models, do you think the second and third phase of the third section were worth the extra effort? Was any model successful in diagnosing schizophrenia from voice?
-  - How do the predictive models you built relate to the descriptive analysis conducted in the second section?
-  - What is the explanatory scope of the analyses and procedures you conducted here, if any?
+I messed around a lot with my models and as a result I have a lot of filler and some of it may be messy and even incorrectly done. 
 
-> Write your report here
+Anyway, I attempted the following:
+
+I figured the parameters available to us likely have high correlation and that this might be a problem, as the model would simply overfit on the training data parameters in such a way where it does not have a clear understanding of how the variables appear in nature; i.e. it cannot distinguish the real influence/importance of each parameter. As such, I tried to cull them by calculating the correlations and omitting any over 0.5, and making these the predictors. I did this in a way that might not be entirely optimal; I assume a ML solution with tuning the recipe would've sufficed better.
+
+I normalized the recipe predictors and used yeojohnson as I figured that would help with the lack of normality the data had, squishing it into a narrower range. Perhaps I should've done more pre-processing.
+
+Afterwards, I messed about with various ML methods, such as tuning a tripartite and picking the best model, anova racing using kernlab and klaR engines, gbm (gradient boosting machine), svmPoly (support vector machine model). 
+They gave mostly the same results of 60-65% accuracy and similar ROC.
+It's possible that I was doing them incorrectly, or that one of my pre-processing steps, such as the recipe I chose, may have lessened the data/training quality.
+
+  - Based on the performance evaluation of your models, do you think the second and third phase of the third section were worth the extra effort? Was any model successful in diagnosing schizophrenia from voice?
+
+It appears that I am not yet capable of actually creating or tuning a model to be better than the default; i.e. I was stuck at around 64% throughout my attempts, which was not better than what I had in the 2nd part. I assume there's something I'm still missing or that the act of tuning and training a model takes extensive trial and error alongside statistical knowledge--that is, choices that are justified with more than idle curiosity and have some sort of knowledge of the data distribution or statistical methods behind them (the latter two I am still lacking in). That said, it could be not worth the effort for this task--I'm not sure.
+
+  - How do the predictive models you built relate to the descriptive analysis conducted in the second section?
+
+I struggled with tying the predictive models to the descriptive analysis, but I did attempt to remove the features that I imagined to be less useful for prediction; that is, the features that correlated heavily with each other. Many of these were "not statistically significant" when I did a quick wilcox on them earlier on. I'm not sure whether a quick statistical significance test is warranted, I just figured the "statistically likely" values were the ones likely to differentiate the groups from each other, and therefore be useful for a classification task.
+
+It does appear that I may have been correct about the SCZ and CTRL speech and pitch parameters overlapping too much on the density plot for it to be a slam dunk classification task.
+
+  - What is the explanatory scope of the analyses and procedures you conducted here, if any?
+From the visual analyses alone, it is rather apparent that schizophrenic and non-schizophrenic individuals have more or less the same "distribution" of vocal characteristics outside of schizophrenics "trending towards the bottom" on variables such as pitch and number of syllables spoken. It is very likely that, as a result, it is rather difficult to distinguish one from the other unless you happen to have a schizophrenic with a very "stereotypically extreme" distribution of pitch and speech characteristics. As such, I'm not sure whether speech characteristics are enough alone for the sake of distinguishing the two from each other (reliably anyway).
+
+While it's possible my models were all just poorly optimized and handled, it seems to me that a percentage of much over 70% would be overfitting on the training data/data available to the study. I suppose it could still be used as one of many markers of schizophrenia though, just not as a standalone one.
