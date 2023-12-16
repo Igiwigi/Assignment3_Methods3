@@ -25,7 +25,7 @@ knit: (function(inputFile, encoding) {
 rand_seed <- set.seed(123)
 knitr::opts_chunk$set(echo = TRUE, cache.extra = rand_seed) ##how do this??
 library(pacman)
-pacman::p_load(plyr, tidyverse, ggplot2, dplyr, caret, parsnip, pROC, ranger, workflows, vip, yardstick, tidymodels, finetune, rsample, discrim, klaR, kernlab)
+pacman::p_load(tidyverse, ggplot2, dplyr, caret, parsnip, pROC, ranger, workflows, vip, yardstick, tidymodels, finetune, rsample, discrim, klaR, kernlab)
 #mlbench, kernlab, discrim,klaR)
 ```
 
@@ -67,7 +67,7 @@ There are two different data sets for this assignment:
   - *articulation rate (nsyll/ phonationtime):* average number of syllables per second where speech is present
   - *ASD (speakingtime/nsyll):* average syllable duration
 
-```{r import_articulation_data}
+```{r import_articulation_data, warning = F, results = 'hide'}
 art_data <- read.table("../data/articulation_data.txt", header = T, fill = T)
 p_data <- read.table("../data/pitch_data.txt", header = T, fill = T)
 
@@ -83,7 +83,7 @@ final_data <- read.table("../data/final_phonation.txt", header = T, fill = T)
   - *coefvar:* Coefficient of variation
 
 
-```{r cleaning_up_data_for_merge}
+```{r cleaning_up_data_for_merge, results = 'hide', Warning = F}
 #mutating diagnosis for myself
 p_data <- p_data %>%
   mutate(Diagnosis = if_else(Diagnosis == "control", "CTRL", "SCZ" ))
@@ -94,33 +94,28 @@ art_data <- art_data %>%
 
 #changing the column names to what they ought be for the merge
 art_data <- art_data %>%
-  #these are already present in the data but wrongly named
-  rename(Trial = X.nsyll)%>%
-  rename(ID = rate)%>%
-  rename(Diagnosis = articulation)%>%
-  rename(Study = X.nsyll.dur.) %>%
-  #adding the two new values that are missing but can be inferred from data?
+  dplyr::rename(Trial = X.nsyll)%>%   #these are already present in the data but wrongly named
+  dplyr::rename(ID = rate)%>%
+  dplyr::rename(Diagnosis = articulation)%>%
+  dplyr::rename(Study = X.nsyll.dur.) %>%   #adding the two new values that are missing but can be inferred from data? (hopefully correctly done)
   mutate(articulationrate = (nsyll/phonationtime))%>%
-  #is this correct? *ASD (speakingtime/nsyll):* average syllable duration
-  #but there is no direct speakingtime unless that is speechrate?
   mutate(ASD = (speechrate/nsyll)) %>%
-  #naming to match the naming convention
   mutate(Diagnosis = if_else(Diagnosis == "control", "CTRL", "SCZ" ))
 
 #renaming more to make them pitch-distinct and more convenient for me
 p_data <- p_data %>%
-rename(p_mean = mean) %>%
-rename(p_sd = sd) %>%
-rename(p_min = min) %>%
-rename(p_max = max) %>%
-rename(p_median = median) %>%
-rename(p_iqr = iqr)%>%
-rename(p_mad = mad) %>%
-rename(p_coefvar = coefvar)
+ dplyr::rename(p_mean = mean) %>%
+ dplyr::rename(p_sd = sd) %>%
+ dplyr::rename(p_min = min) %>%
+ dplyr::rename(p_max = max) %>%
+ dplyr::rename(p_median = median) %>%
+ dplyr::rename(p_iqr = iqr)%>%
+ dplyr::rename(p_mad = mad) %>%
+ dplyr::rename(p_coefvar = coefvar)
 
 #renaming more for my own convenience
 art_data <- art_data %>%
-rename(full_dur = dur)
+ dplyr::rename(full_dur = dur)
 
 
 #should we choose only the relevant columns, are means, mins, maxes, etc. relevant if not listed??
@@ -151,15 +146,15 @@ df <- left_join(p_data, art_data, by = c("ID", "Study", "Trial", "Diagnosis"))
 write.csv(df, "../data/merged_data.csv", row.names = FALSE)
 ```
 
-Fixing the latest dataframe given by Maxime later on:
+## Fixing the latest dataframe given by Maxime later on, this makes the cleaning up of earlier obsolete:
 ```{r fix_new_df}
 final_data <- final_data %>%
   mutate(diagnosis = if_else(diagnosis == "control", "CTRL", "SCZ" )) %>%
-  rename(syllable_duration = X.n_syllables.duration., syllables_phonation_duration = X.n_syllables.phonation_duration.)%>%
-  rename(Study = study, ID = id, Trial = trial, Diagnosis = diagnosis)%>%
+   dplyr::rename(syllable_duration = X.n_syllables.duration., syllables_phonation_duration = X.n_syllables.phonation_duration.)%>%
+   dplyr::rename(Study = study, ID = id, Trial = trial, Diagnosis = diagnosis)%>%
   mutate(average_syllable_duration = (syllable_duration/n_syllables))%>%
   mutate(average_pause_duration = (pause_duration/n_pauses))%>%
-  rename(total_pause_duration = pause_duration)
+   dplyr::rename(total_pause_duration = pause_duration)
 
   
 final_data$Diagnosis <- as.factor(final_data$Diagnosis)
@@ -188,7 +183,7 @@ df <- df %>%
   ))
 
 #why are there so many NA values in this dataframe but not the originals? 1900 obs. to 1562 obs. (though some were extreme values omitted)
-#could be fixed with ML?
+#could be fixed with ML? for now ill just omit
 df <- na.omit(df)
 
 ```
@@ -198,39 +193,42 @@ df <- na.omit(df)
 In this section, use whatever statistical procedures you think relevant to get a good understanding of the data set, particularly as regards to the differences between linguistic markers of neurotypical and schizophrenic speech. Here as in the following sections, make sure that we understand what you're doing and why you're doing it (you can do this by adding text right before or after the corresponding chunk of code).
 
 Here are some of the things you can do:
-  - Describe the data set (number of studies, number of participants, age, gender, clinical and cognitive features of the two groups) and assess whether the groups (schizophrenia and controls) are balanced.
-  - Describe the acoustic profile of a schizophrenic voice: which features are different? E.g. People with schizophrenia tend to have high-pitched voice. 
 
 ```{r summarize_dataset, warning = F, error= F}
 df %>%
   group_by(Diagnosis) %>%
-  summarize(Count = n())
+  dplyr::summarize(Count = n())
 
 df %>%
   group_by(Diagnosis, Study) %>%
-  summarize(Count = n())
-#fairly balanced, though for some reason big difference between Study 3 for SCZ and CTRL (151 vs 232)
+  dplyr::summarize(Count = n())
 
 df %>%
   group_by(Diagnosis, Trial) %>%
-  summarize(Count = n())
-#appears balanced enough
+  dplyr::summarize(Count = n())
+```
+## Describe the data set (number of studies, number of participants, age, gender, clinical and cognitive features of the two groups) and assess whether the groups (schizophrenia and controls) are balanced.
 
+The ratio between diagnoses, studies and trials seems balanced enough, though not perfectly 50/50 (for some reason big difference between Study 3 for SCZ and CTRL (151 vs 232)
+
+
+```{r summarize_dataset_speech, warning = F, error= F}
 df %>%
   group_by(Diagnosis)%>%
-  summarize(across(c(speech_rate, phonation_duration, articulation_rate, average_syllable_duration, n_pauses, n_syllables, p_max), mean))
+  dplyr::summarize(across(c(speech_rate, phonation_duration, articulation_rate, average_syllable_duration, n_pauses, n_syllables, p_max), mean))
 ```
-ratio between diagnoses, studies and trials seems balanced enough, though not perfectly 50/50 (for some reason big difference between Study 3 for SCZ and CTRL (151 vs 232)
+## Describe the acoustic profile of a schizophrenic voice: which features are different? E.g. People with schizophrenia tend to have high-pitched voice.
 
-looking at mean values, the speech markers do seem to differ between SCZ and CTRL
+SCZ appear to have lower mean speech rate, less syllables spoken and a lower max pitch. Their mean average syllable duration also appears longer. It appears as though they do not take more pauses during the recordings and also articulate when speaking just as much.
+
 ```{r dirty_t-test_dataset, warning = F, error= F}
 #doing a quick and dirty t-test to "confirm" the assumptions made at a glance (assuming non-normality so wilcox)
 df %>%
-  summarise(across(where(is.numeric), ~ wilcox.test(.x ~ as.factor(Diagnosis), data = df)$p.value)) %>%
+  dplyr::summarise(across(where(is.numeric), ~ wilcox.test(.x ~ as.factor(Diagnosis), data = df)$p.value)) %>%
   select_if(function(x) any(x < 0.05))
 
 df %>%
-  summarise(across(where(is.numeric), ~ wilcox.test(.x ~ as.factor(Diagnosis), data = df)$p.value)) %>%
+  dplyr::summarise(across(where(is.numeric), ~ wilcox.test(.x ~ as.factor(Diagnosis), data = df)$p.value)) %>%
   select_if(function(x) any(x > 0.05))
 ```
 Most columns (outside of pause_duration) are ""statistically significant"" as in, likely to be from 2 different populations (this being a difference between the diagnoses)
@@ -243,11 +241,11 @@ Pauses don't appear to differ so much, making it seem as though this is not a ma
 This quick t-test would indicate that the speech variables and pitch do differ for the two groups.
 
 That said, I don't know whether I am justified in doing a quick t-test just to see whether the variables are likely to "distinguish" the two groups from each other. Also, not like I checked the assumptions.
-```{r summarize_dataset_visually_setup}
+```{r summarize_dataset_visually_setup, warning = F}
 #this is very stupidly done here, couldve gotten the mean in the function just fine
 means <- df %>%
   group_by(Diagnosis) %>%
-  summarize(mean_ASD = mean(average_syllable_duration), mean_nsyll = mean(n_syllables), mean_npause = mean(n_pauses), mean_pitchmax = mean(p_max), mean_phonationtime = mean(phonation_duration), mean_speechrate = mean(speech_rate), mean_a_pausedur = mean(average_pause_duration), mean_piqr = mean(p_iqr), mean_pitchmin = mean(p_min))
+  dplyr::summarize(mean_ASD = mean(average_syllable_duration), mean_nsyll = mean(n_syllables), mean_npause = mean(n_pauses), mean_pitchmax = mean(p_max), mean_phonationtime = mean(phonation_duration), mean_speechrate = mean(speech_rate), mean_a_pausedur = mean(average_pause_duration), mean_piqr = mean(p_iqr), mean_pitchmin = mean(p_min))
 
 plotting_function <- function(df, x, y, fill, means_df, mean_y, altstringx = NULL, altstringy = NULL) {
   title_x <- ifelse(!is.null(altstringx), altstringx, gsub("_", " ", x))
@@ -278,7 +276,7 @@ plotting_function <- function(df, x, y, fill, means_df, mean_y, altstringx = NUL
 ```
 
 
-```{r summarize_dataset_visually}
+```{r summarize_dataset_visually, warning = F}
 plotting_function(df, "Diagnosis", "average_syllable_duration", "Diagnosis", means, "mean_ASD")
 
 plotting_function(df, "Diagnosis", "p_max", "Diagnosis", means, "mean_pitchmax", altstringy = "Max pitch")
@@ -329,7 +327,7 @@ Finally, here are some online resources that can help you with the modeling proc
 In this phase, you will build a simple random forest model, by:
 
   - Splitting the data in training and testing sets
-```{r simple_model-training_testing_set}
+```{r simple_model-training_testing_set, results = 'hide'}
 #omitting Study and Trial since they're not linguistic markers
 df <- df %>%
   dplyr::select(-Study, -Trial)
@@ -349,8 +347,6 @@ orig <- table(df$Diagnosis) / nrow(df)
 cat("Proportions in Training Set:\n", paste(names(prop_train), prop_train, sep = ": "), "\n\n")
 cat("Proportions in Testing Set:\n", paste(names(prop_test), prop_test, sep = ": "), "\n\n")
 cat("Proportions in OG set:\n", paste(names(orig), orig, sep = ": "), "\n\n")
-#close enough to the split of Diagnosis in the original set, appears validly split into test and training
-#still doesnt account for the split of study, training, other variables (could still be a bad training or testing set)
 ```
 
   - Training a random forest model on the training set
@@ -377,7 +373,7 @@ conf_matrix
 ```
 
   - Compiling performance metrics of your own choosing.
-```{r testing_simple_model_metrics}
+```{r testing_simple_model_metrics, warning = F}
 #a bunch of metrics from carot package, probably can be done in a more concise way
 accuracy <- conf_matrix$overall["Accuracy"]
 precision <- conf_matrix$byClass["Precision"]
@@ -388,16 +384,20 @@ roc_auc <- roc(testing(split_df)$Diagnosis, as.numeric(predictions$.pred_class))
 #fix this error
 
 #metrics, dont understand all of them yet, i.e. Precision = True Positives/(true positives + false positives)
-print(paste("Accuracy:", round(accuracy * 100, 2), "%"))
-print(paste("Precision:", round(precision, 2)))
-print(paste("Recall:", round(recall, 2)))
-print(paste("F1 Score:", round(f1_score, 2)))
-print(paste("Specificity:", round(specificity, 2)))
-print(paste("AUC-ROC:", round(roc_auc, 2)))
+result_string <- paste(
+  "Accuracy:", round(accuracy * 100, 2), "%\n",
+  "Precision:", round(precision, 2), "\n",
+  "Recall:", round(recall, 2), "\n",
+  "F1 Score:", round(f1_score, 2), "\n",
+  "Specificity:", round(specificity, 2), "\n",
+  "AUC-ROC:", round(roc_auc, 2)
+)
+
+print(result_string)
 #67.74 % accuracy at default? with no feature engineering?
 #AUC-ROC 0.67
 ```
-```{r maxime-example}
+```{r maxime-example, echo =F}
 #doing this like in the lectures
 
 #setting a recipe
@@ -436,7 +436,7 @@ vip_plot
 test_results <-
 testing(split_df) %>%
 as_tibble() %>%
-mutate(
+dplyr::mutate(
 predict(rf_fit1, new_data =testing(split_df)),
 predict(rf_fit1, new_data = testing(split_df), type = "prob")
 )
@@ -710,7 +710,7 @@ conf_matrix <-
 print(conf_matrix)
 ```
 
-```{r optimize_model_gbm_failure?}
+```{r optimize_model_gbm_failure, warning= F}
 pacman::p_load("gbm") #trying out gbm
 
 ctrl <- trainControl(method = "cv", 
@@ -785,7 +785,7 @@ print(conf_matrix)
 
 # Discussion: Methodology and Results
 
-Finally, briefly summarize and discuss the methodological choices you've made throughout as well as the results obtained at the different modeling stages. In particular, I would like to get your input as regards to the following questions:
+## Finally, briefly summarize and discuss the methodological choices you've made throughout as well as the results obtained at the different modeling stages. In particular, I would like to get your input as regards to the following questions:
 
 I messed around a lot with my models and as a result I have a lot of filler and some of it may be messy and even incorrectly done. 
 
@@ -799,20 +799,20 @@ Afterwards, I messed about with various ML methods, such as tuning a tripartite 
 They gave mostly the same results of 60-65% accuracy and similar ROC.
 It's possible that I was doing them incorrectly, or that one of my pre-processing steps, such as the recipe I chose, may have lessened the data/training quality.
 
+## Based on the performance evaluation of your models, do you think the second and third phase of the third section were worth the extra effort? Was any model successful in diagnosing schizophrenia from voice?
 
-  - Based on the performance evaluation of your models, do you think the second and third phase of the third section were worth the extra effort? Was any model successful in diagnosing schizophrenia from voice?
+It appears that I am not yet capable of actually creating or tuning a model to be better than the default; i.e. I was stuck at around 64% throughout my attempts, which was not better than what I had in the 2nd part. I assume there's something I'm still missing or that the act of tuning and training a model takes extensive trial and error alongside statistical knowledge--that is, choices that are justified with more than idle curiosity and have some sort of knowledge of the data distribution or statistical methods behind them (the latter two I am still lacking in). 
 
-It appears that I am not yet capable of actually creating or tuning a model to be better than the default; i.e. I was stuck at around 64% throughout my attempts, which was not better than what I had in the 2nd part. I assume there's something I'm still missing or that the act of tuning and training a model takes extensive trial and error alongside statistical knowledge--that is, choices that are justified with more than idle curiosity and have some sort of knowledge of the data distribution or statistical methods behind them (the latter two I am still lacking in). That said, it could be not worth the effort for this task--I'm not sure.
+That said, it could be not worth the effort for this task--I'm not sure, though I do suspect it isn't.
 
 
-  - How do the predictive models you built relate to the descriptive analysis conducted in the second section?
+## How do the predictive models you built relate to the descriptive analysis conducted in the second section?
 
-I struggled with tying the predictive models to the descriptive analysis, but I did attempt to remove the features that I imagined to be less useful for prediction; that is, the features that correlated heavily with each other. Many of these were "not statistically significant" when I did a quick wilcox on them earlier on. I'm not sure whether a quick statistical significance test is warranted, I just figured the "statistically likely" values were the ones likely to differentiate the groups from each other, and therefore be useful for a classification task.
+I struggled with tying the predictive models to the descriptive analysis, but I did attempt to remove the features that I imagined to be less useful for prediction; that is, the features that correlated heavily with each other. Many of these were "not statistically significant" when I did a quick Wilcox on them earlier on. I'm not sure whether a quick statistical significance test is warranted, especially considering that I did not check assumptions; I just figured the "statistically likely" values were the ones likely to differentiate the groups from each other, and therefore be useful for a classification task.
 
 It does appear that I may have been correct about the SCZ and CTRL speech and pitch parameters overlapping too much on the density plot for it to be a slam dunk classification task.
 
-
-  - What is the explanatory scope of the analyses and procedures you conducted here, if any?
+## What is the explanatory scope of the analyses and procedures you conducted here, if any?
   
 From the visual analyses alone, it is rather apparent that schizophrenic and non-schizophrenic individuals have more or less the same "distribution" of vocal characteristics outside of schizophrenics "trending towards the bottom" on variables such as pitch and number of syllables spoken. It is very likely that, as a result, it is rather difficult to distinguish one from the other unless you happen to have a schizophrenic with a very "stereotypically extreme" distribution of pitch and speech characteristics. As such, I'm not sure whether speech characteristics are enough alone for the sake of distinguishing the two from each other (reliably anyway).
 
